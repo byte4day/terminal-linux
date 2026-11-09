@@ -1,135 +1,89 @@
 # terminal-linux
 
-A separate Linux desktop for computer-use agents, viewed and controlled from a terminal.
+**A Linux desktop for AI agents — live in your terminal.**
 
-Inspired by [terminal-mac](https://github.com/govijr/terminal-mac): agents get a real GUI (browser, file manager, apps) without moving your host pointer or scraping your host screen. On Linux this uses **Xvfb + Openbox** instead of a full VM.
+`terminal-linux` boots a private desktop session, streams it into the terminal, and exposes MCP + CLI tools so agents can click, type, open apps, and run shell commands without touching your host pointer or screen.
 
-## What you get
+Built by [byte4day](https://github.com/byte4day).
 
-- Private virtual display (`Xvfb`) with a lightweight window manager
-- Terminal viewer that streams the desktop via **Kitty / Ghostty / WezTerm / iTerm2** graphics
-- Agent CLI + **MCP** tools: `screenshot`, `click`, `drag`, `scroll`, `type`, `key`, `status`
-- Input and screenshots only target the guest `DISPLAY` — not your host desktop
+![Live desktop preview](assets/screenshot-desktop.png)
 
-> This is **not** a full VM. Guest apps run as your user against a nested X server, so they share your home directory and network. For stronger isolation, run inside a container or dedicated user.
+## Features
+
+- Live terminal preview of the guest desktop (high-quality graphics terminals, ANSI fallback elsewhere)
+- Own **agent-terminal** + **Firefox** workspace by default
+- MCP tools for computer use: screenshot, click, type, windows, clipboard, wait, run_in_terminal, …
+- Agent skill + Claude Code plugin marketplace
+- One-terminal mode: keep `terminal-linux up` open; agents drive the same session over MCP
+
+> Display isolation only (Xvfb). Same Linux user/filesystem/network as the host unless you add your own sandbox.
 
 ## Requirements
 
 | Tool | Why |
 |------|-----|
-| Linux x86_64/arm64 | host |
+| Linux | host |
 | `Xvfb` | virtual display |
-| `xdotool` | mouse/keyboard injection |
-| ImageMagick (`import`, `convert`) | screenshots / wallpaper |
-| `openbox` | window manager (system **or** `vendor/openbox` in this repo) |
-| Kitty, Ghostty, WezTerm, or iTerm2 | inline terminal viewer |
-
-Optional apps: `firefox`, `thunar`, `xterm`, …
+| `xdotool` | input |
+| ImageMagick | screenshots |
+| `openbox` (or vendored copy) | window manager |
+| `wmctrl`, `xclip` | window + clipboard helpers |
+| Alacritty/Kitty + Firefox | recommended guest apps |
 
 ## Install
 
 ```bash
-# from this repo
+git clone https://github.com/byte4day/terminal-linux.git
+cd terminal-linux
 uv sync
-uv run terminal-linux doctor
-```
-
-Add a shim on your PATH if you like:
-
-```bash
 uv tool install -e .
-# or: alias terminal-linux='uv run --directory /path/to/os-for-agents terminal-linux'
+terminal-linux doctor
 ```
 
 ## Quick start
 
 ```bash
-# Start a desktop and open the terminal viewer
 terminal-linux up
-
-# Or start headlessly for agents
-terminal-linux up --no-view
-terminal-linux open -- firefox
-terminal-linux action screenshot --output /tmp/guest.png
-terminal-linux action click 640 400
-terminal-linux action type 'hello from the agent'
-terminal-linux action key Return
-terminal-linux stop
 ```
 
-Viewer keys: **Ctrl+]** quit (session keeps running) · **Ctrl+G** shortcut palette · mouse clicks/drags/scroll map into the guest.
-
-## Use with agents
-
-### Claude Code plugin (MCP + skill)
-
-```text
-/plugin marketplace add byte4day/terminal-linux
-/plugin install terminal-linux@terminal-linux
-```
-
-Or from a published clone:
+One terminal = live computer. Agents attach with MCP:
 
 ```bash
 claude mcp add terminal-linux -- terminal-linux mcp default
-terminal-linux skills install
-```
-
-### One-shot local install (Cursor + Claude configs + skill)
-
-```bash
-uv sync && uv tool install -e .   # puts terminal-linux on PATH
 terminal-linux plugins install --all
-terminal-linux plugins status
 ```
 
-### Config snippets
+Headless:
 
 ```bash
-terminal-linux mcp --config                 # Claude / Cursor mcpServers shape
-terminal-linux mcp --config --client vscode # VS Code servers shape
+terminal-linux up --no-view
+terminal-linux action screenshot --output /tmp/guest.png
+terminal-linux action run 'uname -a'
+terminal-linux action open-url https://example.com
+terminal-linux stop
 ```
 
-Checked-in configs: [`.mcp.json`](.mcp.json), [`.cursor/mcp.json`](.cursor/mcp.json), [`mcp/`](mcp/), [`.claude-plugin/`](.claude-plugin/).
+**Ctrl+]** leaves the preview; the session keeps running. Reattach with `terminal-linux watch`.
 
-MCP tools: `status`, `up`, `stop`, `ls`, `open`, `screenshot` (returns image), `click`, `move`, `drag`, `scroll`, `type`, `key`.
+![Agent workspace](assets/screenshot-workspace.png)
 
-See [docs/AGENT.md](docs/AGENT.md) and [skills/terminal-linux/SKILL.md](skills/terminal-linux/SKILL.md).
+## Agent tools
 
-## Lifecycle
+| Tool | Purpose |
+|------|---------|
+| `status` / `up` / `stop` / `ls` | lifecycle |
+| `workspace` | ensure agent-terminal + browser |
+| `screenshot` | see the screen |
+| `windows` / `focus` / `active_window` | window management |
+| `open` / `open_url` | launch apps / URLs |
+| `run_in_terminal` | shell commands in agent-terminal |
+| `click` `move` `drag` `scroll` `type` `key` | input |
+| `clipboard_get` / `clipboard_set` | guest clipboard |
+| `wait` / `wait_stable` | timing |
+| `cursor` | pointer position |
 
-```bash
-terminal-linux ls
-terminal-linux status default
-terminal-linux view default
-terminal-linux open default -- thunar
-terminal-linux stop default
-terminal-linux stop default --force
-```
-
-Customize size: `terminal-linux up work --width 1920 --height 1080 --no-view`.
-
-Data lives under `~/.local/share/terminal-linux/machines/NAME/` (override with `TERMINAL_LINUX_HOME`).
-
-## How it compares
-
-| | [terminal-mac](https://github.com/govijr/terminal-mac) | **terminal-linux** |
-|--|--|--|
-| Guest | macOS VM (Virtualization.framework) | Xvfb + Openbox desktop |
-| Isolation | Strong (separate OS) | Display-isolated; same user/FS |
-| Viewer | Kitty/iTerm graphics | Same idea |
-| Agent API | CLI + MCP | CLI + MCP (compatible shape) |
-
-## Development
-
-```bash
-uv sync
-uv run terminal-linux doctor
-uv run terminal-linux up demo --no-view --open firefox
-uv run terminal-linux action demo screenshot --output /tmp/demo.png
-uv run terminal-linux stop demo
-```
+Docs: [docs/AGENT.md](docs/AGENT.md) · [docs/PLUGINS.md](docs/PLUGINS.md) · [skills/terminal-linux/SKILL.md](skills/terminal-linux/SKILL.md)
 
 ## License
 
-MIT. Openbox is GPL-2.0; the optional vendored binary under `vendor/openbox` retains its upstream license.
+MIT. Vendored Openbox under `vendor/openbox` remains GPL-2.0.

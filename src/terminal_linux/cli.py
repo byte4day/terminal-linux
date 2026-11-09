@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, actions
+from . import __version__, actions, agent_tools
 from .doctor import run_doctor
 from .jsonutil import emit, fail
 from .mcp_server import mcp_config_snippet, run_mcp
-from .plugins import install_claude_mcp, install_cursor_mcp, install_skill, plugin_status
+from .plugins import install_claude_mcp, install_skill, install_user_mcp, plugin_status
 from .session import (
     SessionError,
     list_sessions,
@@ -28,13 +29,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"terminal-linux {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    up = sub.add_parser("up", help="create/start a desktop session and open the viewer")
+    up = sub.add_parser("up", help="start desktop + live terminal screen (live terminal screen)")
     up.add_argument("name", nargs="?", default="default")
     up.add_argument("--width", type=int, default=1280)
     up.add_argument("--height", type=int, default=800)
+    up.add_argument("--fps", type=float, default=12.0, help="live screen refresh rate")
     up.add_argument("--no-view", action="store_true", help="start session and print JSON only")
     up.add_argument("--detach", action="store_true", help="alias of --no-view")
     up.add_argument("--open", action="append", default=[], metavar="APP", help="launch APP inside the session (repeatable)")
+    up.add_argument("--no-browser", action="store_true", help="don't auto-open firefox")
+    up.add_argument("--no-terminal", action="store_true", help="don't auto-open agent-terminal")
 
     start = sub.add_parser("start", help="start a session without the viewer")
     start.add_argument("name", nargs="?", default="default")
@@ -54,19 +58,47 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ls = sub.add_parser("ls", help="list sessions")
 
-    view = sub.add_parser("view", help="stream the guest desktop into the terminal")
+    view = sub.add_parser("view", help="live terminal screen — watch the guest / agent")
     view.add_argument("name", nargs="?", default="default")
-    view.add_argument("--fps", type=float, default=8.0)
+    view.add_argument("--fps", type=float, default=12.0)
+
+    watch = sub.add_parser("watch", help="alias for view (watch agent actions live)")
+    watch.add_argument("name", nargs="?", default="default")
+    watch.add_argument("--fps", type=float, default=12.0)
 
     open_p = sub.add_parser("open", help="launch a command inside the session")
     open_p.add_argument("name", nargs="?", default="default")
     open_p.add_argument("command", nargs=argparse.REMAINDER, help="command after --")
 
+    workspace = sub.add_parser("workspace", help="open agent-terminal + firefox for AI use")
+    workspace.add_argument("name", nargs="?", default="default")
+    workspace.add_argument("--no-browser", action="store_true")
+    workspace.add_argument("--no-terminal", action="store_true")
+
     action = sub.add_parser("action", help="computer-use actions (JSON)")
     action.add_argument("name", nargs="?", default="default")
     action.add_argument(
         "verb",
-        choices=["status", "screenshot", "click", "move", "drag", "type", "key", "scroll"],
+        choices=[
+            "status",
+            "screenshot",
+            "click",
+            "move",
+            "drag",
+            "type",
+            "key",
+            "scroll",
+            "windows",
+            "focus",
+            "active",
+            "cursor",
+            "clipboard-get",
+            "clipboard-set",
+            "open-url",
+            "wait",
+            "wait-stable",
+            "run",
+        ],
     )
     action.add_argument("args", nargs="*")
     action.add_argument("--output", type=Path)
@@ -77,6 +109,10 @@ def _build_parser() -> argparse.ArgumentParser:
     action.add_argument("--dy", type=int, default=0)
     action.add_argument("--x", type=int, default=None)
     action.add_argument("--y", type=int, default=None)
+    action.add_argument("--title", default=None, help="window title substring for focus")
+    action.add_argument("--id", dest="window_id", default=None, help="window id for focus")
+    action.add_argument("--seconds", type=float, default=1.0)
+    action.add_argument("--timeout", type=float, default=10.0)
     action.add_argument("--screenshot", action="store_true", help="return a fresh screenshot path")
 
     mcp = sub.add_parser("mcp", help="run MCP server (stdio) or print client config")
@@ -85,7 +121,7 @@ def _build_parser() -> argparse.ArgumentParser:
     mcp.add_argument(
         "--client",
         default="claude",
-        choices=["claude", "cursor", "vscode"],
+        choices=["claude", "generic", "vscode"],
         help="config shape for --config (default: claude)",
     )
 
@@ -96,14 +132,14 @@ def _build_parser() -> argparse.ArgumentParser:
     skills_install = skills_sub.add_parser("install", help="install skill into a skills directory")
     skills_install.add_argument("--dir", type=Path, default=None)
 
-    plugins = sub.add_parser("plugins", help="install Claude/Cursor MCP + skill plugin pieces")
+    plugins = sub.add_parser("plugins", help="install MCP client + skill plugin pieces")
     plugins_sub = plugins.add_subparsers(dest="plugins_cmd", required=True)
     plugins_sub.add_parser("status", help="show plugin / MCP install status")
     plug_install = plugins_sub.add_parser("install", help="install skill + MCP configs")
-    plug_install.add_argument("--cursor", action="store_true", help="merge into ~/.cursor/mcp.json")
+    plug_install.add_argument("--user-mcp", action="store_true", help="write ~/.config/terminal-linux/mcp.json")
     plug_install.add_argument("--claude", action="store_true", help="merge into Claude MCP config")
     plug_install.add_argument("--skill", action="store_true", help="install agent skill")
-    plug_install.add_argument("--all", action="store_true", help="install skill + cursor + claude")
+    plug_install.add_argument("--all", action="store_true", help="install skill + user MCP + claude")
     plug_install.add_argument("--dir", type=Path, default=None, help="skills directory override")
 
     sub.add_parser("doctor", help="check host dependencies")
@@ -124,6 +160,43 @@ def _handle_action(ns: argparse.Namespace) -> None:
 
     if ns.verb == "status":
         emit(actions.status_payload(ns.name))
+
+    # Verbs that don't need a preloaded state object beyond name
+    if ns.verb == "windows":
+        emit({"ok": True, "windows": agent_tools.list_windows(ns.name)})
+    if ns.verb == "active":
+        emit({"ok": True, **agent_tools.active_window(ns.name)})
+    if ns.verb == "focus":
+        wid = ns.window_id
+        title = ns.title
+        if ns.args:
+            token = ns.args[0]
+            if wid is None and (token.startswith("0x") or token.isdigit()):
+                wid = token
+            elif title is None:
+                title = " ".join(ns.args)
+        emit(agent_tools.focus_window(ns.name, window_id=wid, title=title))
+    if ns.verb == "cursor":
+        emit(agent_tools.cursor_position(ns.name))
+    if ns.verb == "clipboard-get":
+        emit(agent_tools.clipboard_get(ns.name))
+    if ns.verb == "clipboard-set":
+        text = ns.text if ns.text is not None else " ".join(ns.args)
+        emit(agent_tools.clipboard_set(ns.name, text))
+    if ns.verb == "open-url":
+        url = ns.args[0] if ns.args else (ns.text or "")
+        if not url:
+            fail("usage: action NAME open-url URL")
+        emit(agent_tools.open_url(ns.name, url))
+    if ns.verb == "wait":
+        emit(agent_tools.wait(ns.name, ns.seconds if ns.seconds is not None else float(ns.args[0] if ns.args else 1)))
+    if ns.verb == "wait-stable":
+        emit(agent_tools.wait_stable(ns.name, timeout=ns.timeout))
+    if ns.verb == "run":
+        cmd = ns.text if ns.text is not None else " ".join(ns.args)
+        if not cmd:
+            fail("usage: action NAME run 'shell command'")
+        emit(agent_tools.run_in_terminal(ns.name, cmd))
 
     try:
         state = get_running(ns.name)
@@ -207,6 +280,16 @@ def main(argv: list[str] | None = None) -> None:
             apps = []
             for app in getattr(ns, "open", []) or []:
                 apps.append(app.split())
+            headless = ns.cmd == "start" or getattr(ns, "no_view", False) or getattr(ns, "detach", False)
+            # Default AI workspace: own terminal + browser (unless user passed --open).
+            if not apps:
+                if not getattr(ns, "no_terminal", False):
+                    try:
+                        apps.append(agent_tools.pick_guest_terminal())
+                    except SessionError:
+                        pass
+                if not getattr(ns, "no_browser", False) and shutil.which("firefox"):
+                    apps.append(["firefox"])
             state = start_session(ns.name, width=ns.width, height=ns.height, apps=apps)
             payload = {
                 "ok": True,
@@ -217,10 +300,17 @@ def main(argv: list[str] | None = None) -> None:
                 "xvfb_pid": state.xvfb_pid,
                 "wm_pid": state.wm_pid,
             }
-            if ns.cmd == "start" or getattr(ns, "no_view", False) or getattr(ns, "detach", False):
+            if headless:
                 emit(payload)
             print(json.dumps(payload, indent=2), file=sys.stderr)
-            raise SystemExit(run_viewer(ns.name))
+            print(
+                "ONE TERMINAL MODE: this terminal IS the live computer preview.\n"
+                "Keep it open. MCP clients drive it via MCP — "
+                f"no second pane needed (session={ns.name}).\n"
+                "Ctrl+] exits the preview; desktop keeps running.",
+                file=sys.stderr,
+            )
+            raise SystemExit(run_viewer(ns.name, fps=getattr(ns, "fps", 12.0)))
 
         if ns.cmd in {"stop", "down"}:
             stop_session(ns.name, force=ns.force)
@@ -232,7 +322,7 @@ def main(argv: list[str] | None = None) -> None:
         if ns.cmd == "ls":
             emit({"ok": True, "sessions": list_sessions()})
 
-        if ns.cmd == "view":
+        if ns.cmd in {"view", "watch"}:
             raise SystemExit(run_viewer(ns.name, fps=ns.fps))
 
         if ns.cmd == "open":
@@ -243,6 +333,15 @@ def main(argv: list[str] | None = None) -> None:
                 fail("usage: terminal-linux open [NAME] -- COMMAND...")
             pid = open_app(ns.name, cmd)
             emit({"ok": True, "pid": pid, "command": cmd})
+
+        if ns.cmd == "workspace":
+            emit(
+                agent_tools.ensure_agent_workspace(
+                    ns.name,
+                    browser=not ns.no_browser,
+                    terminal=not ns.no_terminal,
+                )
+            )
 
         if ns.cmd == "action":
             _handle_action(ns)
@@ -266,12 +365,12 @@ def main(argv: list[str] | None = None) -> None:
             if ns.plugins_cmd == "status":
                 emit(plugin_status())
             if ns.plugins_cmd == "install":
-                do_all = ns.all or not (ns.cursor or ns.claude or ns.skill)
+                do_all = ns.all or not (ns.user_mcp or ns.claude or ns.skill)
                 results: dict[str, str] = {}
                 if do_all or ns.skill:
                     results["skill"] = str(install_skill(ns.dir))
-                if do_all or ns.cursor:
-                    results["cursor"] = str(install_cursor_mcp())
+                if do_all or ns.user_mcp:
+                    results["user_mcp"] = str(install_user_mcp())
                 if do_all or ns.claude:
                     results["claude"] = str(install_claude_mcp())
                 emit({"ok": True, "installed": results, **plugin_status()})

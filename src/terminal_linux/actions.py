@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from . import activity
 from .session import SessionError, get_running
 from .state import SessionState
 
@@ -118,10 +119,13 @@ def click(
     _run_xdotool(state, ["mousemove", "--sync", str(x), str(y)])
     for _ in range(clicks):
         _run_xdotool(state, ["click", button_map[button]])
+    label = "double-click" if clicks == 2 else ("triple-click" if clicks == 3 else "click")
+    activity.note(state.name, f"agent {label} {button} @ {x},{y}")
 
 
 def move(state: SessionState, x: int, y: int) -> None:
     _run_xdotool(state, ["mousemove", "--sync", str(x), str(y)])
+    activity.note(state.name, f"agent move @ {x},{y}")
 
 
 def drag(state: SessionState, x1: int, y1: int, x2: int, y2: int) -> None:
@@ -129,6 +133,7 @@ def drag(state: SessionState, x1: int, y1: int, x2: int, y2: int) -> None:
     _run_xdotool(state, ["mousedown", "1"])
     _run_xdotool(state, ["mousemove", "--sync", str(x2), str(y2)])
     _run_xdotool(state, ["mouseup", "1"])
+    activity.note(state.name, f"agent drag {x1},{y1}→{x2},{y2}")
 
 
 def scroll(
@@ -141,7 +146,7 @@ def scroll(
 ) -> None:
     if x is not None and y is not None:
         _run_xdotool(state, ["mousemove", "--sync", str(x), str(y)])
-    # Match terminal-mac: negative dy scrolls down (X button 5).
+    # negative dy scrolls down (X button 5).
     if dy:
         button = "5" if dy < 0 else "4"
         for _ in range(max(1, abs(dy) // 40)):
@@ -150,12 +155,15 @@ def scroll(
         button = "7" if dx > 0 else "6"
         for _ in range(max(1, abs(dx) // 40)):
             _run_xdotool(state, ["click", button])
+    activity.note(state.name, f"agent scroll dy={dy} dx={dx}")
 
 
 def type_text(state: SessionState, text: str) -> None:
     if text == "":
         return
     _run_xdotool(state, ["type", "--clearmodifiers", "--delay", "12", "--", text])
+    preview = text if len(text) <= 40 else text[:37] + "..."
+    activity.note(state.name, f"agent type {preview!r}")
 
 
 def _normalize_key(token: str) -> str:
@@ -196,6 +204,7 @@ def press_key(state: SessionState, keyspec: str) -> None:
 
     chord = "+".join([*xmods, key]) if xmods else key
     _run_xdotool(state, ["key", "--clearmodifiers", chord])
+    activity.note(state.name, f"agent key {chord}")
 
 
 def status_payload(name: str = "default") -> dict[str, Any]:

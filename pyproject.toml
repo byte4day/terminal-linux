@@ -1,13 +1,18 @@
 [project]
 name = "terminal-linux"
 version = "0.1.0"
-description = "A separate Linux desktop for computer-use agents, viewed and controlled from a terminal."
+description = "A Linux desktop for AI agents, live in your terminal."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
+authors = [{ name = "byte4day", email = "byte4day@users.noreply.github.com" }]
 dependencies = [
     "mcp>=1.9.0,<2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/byte4day/terminal-linux"
+Repository = "https://github.com/byte4day/terminal-linux"
 
 [project.scripts]
 terminal-linux = "terminal_linux.cli:main"

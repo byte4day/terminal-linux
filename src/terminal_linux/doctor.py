@@ -15,7 +15,19 @@ def run_doctor() -> dict[str, Any]:
     def check(name: str, ok: bool, detail: str) -> None:
         checks.append({"name": name, "ok": ok, "detail": detail})
 
-    for binary in ("Xvfb", "xdotool", "import", "convert", "xsetroot", "xdpyinfo"):
+    for binary in (
+        "Xvfb",
+        "xdotool",
+        "import",
+        "convert",
+        "xsetroot",
+        "xdpyinfo",
+        "wmctrl",
+        "xclip",
+        "alacritty",
+        "kitty",
+        "firefox",
+    ):
         path = shutil.which(binary)
         check(binary, bool(path), path or "not found on PATH")
 

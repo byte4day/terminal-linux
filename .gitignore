@@ -10,6 +10,7 @@ wheels/
 .venv
 
 # Local session/runtime junk
-*.png
 *.xpm
+# keep README screenshots
+!assets/*.png
 
