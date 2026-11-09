@@ -1,11 +1,11 @@
 ---
 name: terminal-linux
-description: Operate a separate Linux desktop (Xvfb) with its own agent-terminal and browser — screenshots, clicks, typing, windows, clipboard, wait_stable, run_in_terminal — without touching the user's host desktop.
+description: Drive a separate Xvfb Linux desktop (screenshot, click, type, windows, clipboard, wait_stable, run_in_terminal) without touching the host desktop. Use for computer-use tasks that need an isolated guest UI.
 ---
 
 # terminal-linux
 
-Private Linux desktop for computer-use. Guest has **agent-terminal** and usually **Firefox**. Never control the host desktop.
+Private Linux desktop for computer-use ([Agent Skills](https://agentskills.io/) package). Guest has **agent-terminal** and usually **Firefox**. Never control the host desktop. Prefer the host default / `inherit` model; Claude computer-use work usually fits **Opus** or **Fable** — do not hard-pin unless the user asks.
 
 ## Loop
 

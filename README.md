@@ -18,8 +18,9 @@ Built by [byte4day](https://github.com/byte4day).
 - Drive the same desktop yourself from the terminal (mouse + keys) while agents use MCP
 - Own **agent-terminal** + **Firefox** workspace by default
 - MCP tools for computer use: screenshot, click, type, windows, clipboard, wait, run_in_terminal, …
-- Agent skill + Claude Code plugin marketplace
+- Agent skill ([Agent Skills](https://agentskills.io/)) + Claude Code plugin marketplace
 - One-terminal mode: keep `terminal-linux up` open; agents drive the same session over MCP
+- Works with Claude Code, Cursor, Codex, and other Agent Skills hosts; prefer `inherit` / host default models (Claude computer-use: Opus or Fable when you pin)
 
 > Display isolation only (Xvfb). Same Linux user/filesystem/network as the host unless you add your own sandbox.
 
