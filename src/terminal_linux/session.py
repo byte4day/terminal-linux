@@ -342,7 +342,13 @@ def _prepare_command(name: str, command: list[str]) -> tuple[list[str], dict[str
 
     app = Path(cmd[0]).name
     if app in {"firefox", "firefox-bin"}:
-        profile = machine_dir(name) / "mozilla"
+        # Snap Firefox often fails with custom profiles under ~/.local/share
+        # ("Close Firefox" dialog). Prefer ~/snap/firefox/common when present.
+        snap_common = Path.home() / "snap" / "firefox" / "common"
+        if snap_common.is_dir() or "snap" in Path(shutil.which(cmd[0]) or cmd[0]).resolve().parts:
+            profile = snap_common / f"terminal-linux-{name}"
+        else:
+            profile = machine_dir(name) / "mozilla"
         profile.mkdir(parents=True, exist_ok=True)
         if "--no-remote" not in cmd:
             cmd.insert(1, "--no-remote")
