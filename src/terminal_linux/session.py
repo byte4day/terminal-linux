@@ -125,16 +125,23 @@ def paint_desktop(env: dict[str, str], width: int, height: int, name: str) -> No
                     magick,
                     "-size",
                     f"{width}x{height}",
-                    "xc:#1a1d23",
+                    f"gradient:#12151c-#1e2633",
                     "-gravity",
                     "center",
                     "-fill",
-                    "#8b93a7",
+                    "#c5cee0",
                     "-pointsize",
-                    "28",
+                    "36",
                     "-annotate",
                     "0",
-                    f"terminal-linux · {name}",
+                    "terminal-linux",
+                    "-fill",
+                    "#7f8ba3",
+                    "-pointsize",
+                    "18",
+                    "-annotate",
+                    "+0+42",
+                    "AI agent desktop",
                     str(wallpaper),
                 ],
                 check=True,
@@ -344,6 +351,16 @@ def _prepare_command(name: str, command: list[str]) -> tuple[list[str], dict[str
             if flag not in cmd:
                 cmd.insert(1, flag)
         env["GDK_BACKEND"] = "x11"
+    elif app in {"alacritty", "kitty", "xterm", "xfce4-terminal"}:
+        guest_home = machine_dir(name) / "guest-home"
+        guest_home.mkdir(parents=True, exist_ok=True)
+        (guest_home / "README.txt").write_text(
+            "terminal-linux guest home\nAI agents work here.\n"
+        )
+        env["HOME"] = str(guest_home)
+        env["TERMINAL_LINUX_GUEST_HOME"] = str(guest_home)
+        env["LANG"] = "C"
+        env["LC_ALL"] = "C"
 
     return cmd, env
 
