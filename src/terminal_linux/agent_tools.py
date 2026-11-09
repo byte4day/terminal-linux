@@ -60,7 +60,10 @@ def ensure_agent_workspace(name: str, *, browser: bool = True, terminal: bool = 
     """Make sure the guest has the tools an agent usually needs."""
     state = get_running(name)
     launched: list[list[str]] = []
-    if terminal:
+    existing = list_windows(name)
+    titles = " ".join(w.get("title", "").lower() for w in existing)
+    classes = " ".join(w.get("class", "").lower() for w in existing)
+    if terminal and "agent-terminal" not in titles:
         try:
             cmd = pick_guest_terminal()
             open_app(name, cmd)
@@ -68,7 +71,7 @@ def ensure_agent_workspace(name: str, *, browser: bool = True, terminal: bool = 
             activity.note(name, "opened agent-terminal")
         except SessionError as exc:
             activity.note(name, f"terminal open failed: {exc}")
-    if browser and shutil.which("firefox"):
+    if browser and shutil.which("firefox") and "firefox" not in classes and "firefox" not in titles:
         open_app(name, ["firefox"])
         launched.append(["firefox"])
         activity.note(name, "opened firefox")
