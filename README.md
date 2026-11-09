@@ -12,7 +12,10 @@ Built by [byte4day](https://github.com/byte4day).
 
 ## Features
 
-- Live terminal preview of the guest desktop (graphics terminals + ANSI fallback)
+- Live terminal preview (~20 fps) via a persistent capture stream (not a new screenshot process every frame)
+- Visible **agent cursor** overlay so you can see where the agent is pointing
+- **Multi-session tabs** — run several named desktops, switch in one terminal (`Alt+←/→`, `Alt+1-9`)
+- Drive the same desktop yourself from the terminal (mouse + keys) while agents use MCP
 - Own **agent-terminal** + **Firefox** workspace by default
 - MCP tools for computer use: screenshot, click, type, windows, clipboard, wait, run_in_terminal, …
 - Agent skill + Claude Code plugin marketplace
@@ -66,6 +69,16 @@ terminal-linux stop
 ```
 
 **Ctrl+]** leaves the preview; the session keeps running. Reattach with `terminal-linux watch`.
+
+### Multi-session tabs
+
+```bash
+terminal-linux up demo --no-view
+terminal-linux up work --no-view
+terminal-linux watch demo    # status bar shows tabs; Alt+←/→ or Alt+1-9 to switch
+```
+
+Each named session is its own Xvfb desktop. Agents attach with `terminal-linux mcp <name>`.
 
 ## Prompt for AI agents (setup)
 

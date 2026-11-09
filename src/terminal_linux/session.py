@@ -141,7 +141,7 @@ def paint_desktop(env: dict[str, str], width: int, height: int, name: str) -> No
                     "18",
                     "-annotate",
                     "+0+42",
-                    "AI agent desktop",
+                    f"session · {name}",
                     str(wallpaper),
                 ],
                 check=True,
@@ -322,6 +322,14 @@ def list_sessions() -> list[dict]:
             }
         )
     return rows
+
+
+def running_session_names(*, prefer: str | None = None) -> list[str]:
+    """Running session names for the live tab bar (prefer first if still up)."""
+    names = [row["name"] for row in list_sessions() if row.get("status") == "running"]
+    if prefer and prefer in names:
+        names = [prefer] + [n for n in names if n != prefer]
+    return names
 
 
 def _prepare_command(name: str, command: list[str]) -> tuple[list[str], dict[str, str]]:

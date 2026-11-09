@@ -14,3 +14,6 @@ wheels/
 # keep README screenshots
 !assets/*.png
 
+
+# local LinkedIn export
+assets/linkedin/

@@ -33,7 +33,7 @@ def _build_parser() -> argparse.ArgumentParser:
     up.add_argument("name", nargs="?", default="default")
     up.add_argument("--width", type=int, default=1280)
     up.add_argument("--height", type=int, default=800)
-    up.add_argument("--fps", type=float, default=12.0, help="live screen refresh rate")
+    up.add_argument("--fps", type=float, default=20.0, help="live screen refresh rate")
     up.add_argument("--no-view", action="store_true", help="start session and print JSON only")
     up.add_argument("--detach", action="store_true", help="alias of --no-view")
     up.add_argument("--open", action="append", default=[], metavar="APP", help="launch APP inside the session (repeatable)")
@@ -60,11 +60,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     view = sub.add_parser("view", help="live terminal screen — watch the guest / agent")
     view.add_argument("name", nargs="?", default="default")
-    view.add_argument("--fps", type=float, default=12.0)
+    view.add_argument("--fps", type=float, default=20.0)
+    view.add_argument("--no-cursor", action="store_true", help="hide agent cursor overlay")
 
     watch = sub.add_parser("watch", help="alias for view (watch agent actions live)")
     watch.add_argument("name", nargs="?", default="default")
-    watch.add_argument("--fps", type=float, default=12.0)
+    watch.add_argument("--fps", type=float, default=20.0)
+    watch.add_argument("--no-cursor", action="store_true", help="hide agent cursor overlay")
 
     open_p = sub.add_parser("open", help="launch a command inside the session")
     open_p.add_argument("name", nargs="?", default="default")
@@ -310,7 +312,13 @@ def main(argv: list[str] | None = None) -> None:
                 "Ctrl+] exits the preview; desktop keeps running.",
                 file=sys.stderr,
             )
-            raise SystemExit(run_viewer(ns.name, fps=getattr(ns, "fps", 12.0)))
+            raise SystemExit(
+                run_viewer(
+                    ns.name,
+                    fps=getattr(ns, "fps", 20.0),
+                    show_cursor_overlay=not getattr(ns, "no_cursor", False),
+                )
+            )
 
         if ns.cmd in {"stop", "down"}:
             stop_session(ns.name, force=ns.force)
@@ -323,7 +331,13 @@ def main(argv: list[str] | None = None) -> None:
             emit({"ok": True, "sessions": list_sessions()})
 
         if ns.cmd in {"view", "watch"}:
-            raise SystemExit(run_viewer(ns.name, fps=ns.fps))
+            raise SystemExit(
+                run_viewer(
+                    ns.name,
+                    fps=ns.fps,
+                    show_cursor_overlay=not ns.no_cursor,
+                )
+            )
 
         if ns.cmd == "open":
             cmd = list(ns.command)
