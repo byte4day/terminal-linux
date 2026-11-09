@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from mcp.server.fastmcp.utilities.types import Image
+
 from . import actions, agent_tools
 from .session import SessionError, get_running, list_sessions, open_app, start_session, stop_session
 
