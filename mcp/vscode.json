@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "terminal-linux": {
+      "type": "stdio",
+      "command": "terminal-linux",
+      "args": ["mcp", "default"]
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "terminal-linux",
+  "owner": {
+    "name": "byte4day",
+    "url": "https://github.com/byte4day"
+  },
+  "metadata": {
+    "description": "Computer use on a separate Linux desktop for coding agents."
+  },
+  "plugins": [
+    {
+      "name": "terminal-linux",
+      "source": "./",
+      "description": "Computer use on a separate Linux Xvfb desktop, with MCP tools and an agent skill."
+    }
+  ]
+}

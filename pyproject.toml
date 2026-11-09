@@ -1,0 +1,22 @@
+[project]
+name = "terminal-linux"
+version = "0.1.0"
+description = "A separate Linux desktop for computer-use agents, viewed and controlled from a terminal."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "mcp>=1.9.0,<2",
+]
+
+[project.scripts]
+terminal-linux = "terminal_linux.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.22,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]

@@ -1,0 +1,5 @@
+This directory contains a trimmed binary redistributable of Openbox
+(https://openbox.org/), licensed under the GNU GPL version 2.
+
+It is used only when `openbox` is not installed on the host PATH.
+Source packages are available from your distribution and from the Openbox project.

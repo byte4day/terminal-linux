@@ -1,0 +1,20 @@
+{
+  "name": "terminal-linux",
+  "version": "0.1.0",
+  "description": "Computer use on a separate Linux desktop (Xvfb): screenshot, click, type and shortcut tools plus a skill for driving the guest. Requires the terminal-linux CLI on PATH.",
+  "author": {
+    "name": "byte4day",
+    "url": "https://github.com/byte4day"
+  },
+  "homepage": "https://github.com/byte4day/terminal-linux",
+  "repository": "https://github.com/byte4day/terminal-linux",
+  "license": "MIT",
+  "keywords": ["computer-use", "linux", "xvfb", "mcp", "desktop", "agents"],
+  "skills": "./skills/",
+  "mcpServers": {
+    "terminal-linux": {
+      "command": "terminal-linux",
+      "args": ["mcp", "default"]
+    }
+  }
+}
