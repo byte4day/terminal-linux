@@ -6,11 +6,13 @@
 
 Built by [byte4day](https://github.com/byte4day).
 
-![Live desktop preview](assets/screenshot-desktop.png)
+![terminal-linux desktop](assets/screenshot-desktop.png)
+
+<p align="center"><img src="assets/screenshot-workspace.png" alt="agent-terminal" width="720" /></p>
 
 ## Features
 
-- Live terminal preview of the guest desktop (high-quality graphics terminals, ANSI fallback elsewhere)
+- Live terminal preview of the guest desktop (graphics terminals + ANSI fallback)
 - Own **agent-terminal** + **Firefox** workspace by default
 - MCP tools for computer use: screenshot, click, type, windows, clipboard, wait, run_in_terminal, …
 - Agent skill + Claude Code plugin marketplace
@@ -65,7 +67,35 @@ terminal-linux stop
 
 **Ctrl+]** leaves the preview; the session keeps running. Reattach with `terminal-linux watch`.
 
-![Agent workspace](assets/screenshot-workspace.png)
+## Prompt for AI agents (setup)
+
+Copy-paste this into Claude Code, Codex, or any coding agent:
+
+```text
+Set up terminal-linux for me on this Linux machine.
+
+Repo: https://github.com/byte4day/terminal-linux
+Branch: develop
+
+Do this end-to-end without asking me to run commands manually unless something needs sudo or a login:
+
+1. Clone the repo if needed (or use the current checkout), checkout develop, and create a fresh environment with `uv sync`.
+2. Install the CLI on PATH with `uv tool install -e .` (or ensure `.venv/bin/terminal-linux` is usable).
+3. Run `terminal-linux doctor` and install any missing host packages you can (Xvfb, xdotool, ImageMagick, wmctrl, xclip, openbox or use the vendored openbox, alacritty/kitty, firefox).
+4. Install agent integrations: `terminal-linux plugins install --all` and wire MCP:
+   `claude mcp add terminal-linux -- $(command -v terminal-linux) mcp default`
+   (or print `terminal-linux mcp --config` and add it to my MCP client config).
+5. Smoke-test headless:
+   - `terminal-linux up demo --no-view`
+   - `terminal-linux action demo windows` (expect agent-terminal + Firefox)
+   - `terminal-linux action demo screenshot --output /tmp/terminal-linux-smoke.png`
+   - `terminal-linux action demo run 'echo ok && uname -srm'`
+   - `terminal-linux stop demo --force`
+6. Tell me how to open the live preview (`terminal-linux up`) and how to drive it with MCP tools.
+7. Do not push commits or change git remotes unless I ask.
+
+If anything fails, fix it or report the exact blocker (missing sudo, missing package, unsupported terminal for live preview).
+```
 
 ## Agent tools
 

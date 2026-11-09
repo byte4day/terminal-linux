@@ -1,0 +1,12 @@
+# Minimal clean config for the guest agent-terminal (no host config).
+[window]
+opacity = 1.0
+decorations = "full"
+title = "agent-terminal"
+
+[font]
+size = 12.0
+
+[colors.primary]
+background = "#0f1419"
+foreground = "#e6edf3"

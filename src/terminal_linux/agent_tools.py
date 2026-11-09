@@ -6,9 +6,15 @@ import subprocess
 import time
 from typing import Any
 
+from pathlib import Path
+
 from . import actions, activity
+from .paths import PACKAGE_ROOT
 from .session import SessionError, get_running, open_app
 from .state import SessionState
+
+_AGENT_SHELL = PACKAGE_ROOT / "assets" / "agent-shell.sh"
+_ALACRITTY_CFG = PACKAGE_ROOT / "assets" / "alacritty-agent.toml"
 
 
 def _run(state: SessionState, cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -30,15 +36,23 @@ def _run(state: SessionState, cmd: list[str], *, check: bool = True) -> subproce
 
 
 def pick_guest_terminal() -> list[str]:
-    """Prefer a real terminal emulator for the AI guest."""
-    for candidate in (
-        ["alacritty", "--title", "agent-terminal", "-e", "bash", "--login"],
-        ["kitty", "--title", "agent-terminal", "bash", "--login"],
-        ["xterm", "-T", "agent-terminal", "-e", "bash", "--login"],
-        ["xfce4-terminal", "--title=agent-terminal"],
-    ):
-        if shutil.which(candidate[0]):
-            return list(candidate)
+    """Prefer a real terminal emulator for the AI guest (clean config, no host shell RC)."""
+    shell = str(_AGENT_SHELL) if _AGENT_SHELL.exists() else "bash"
+    shell_args = ["bash", str(_AGENT_SHELL)] if _AGENT_SHELL.exists() else ["bash", "--noprofile", "--norc"]
+
+    if shutil.which("alacritty"):
+        cmd = ["alacritty", "--title", "agent-terminal"]
+        if _ALACRITTY_CFG.exists():
+            cmd.extend(["--config-file", str(_ALACRITTY_CFG)])
+        cmd.append("-e")
+        cmd.extend(shell_args)
+        return cmd
+    if shutil.which("kitty"):
+        return ["kitty", "--title", "agent-terminal", "--config", "NONE", *shell_args]
+    if shutil.which("xterm"):
+        return ["xterm", "-T", "agent-terminal", "-e", *shell_args]
+    if shutil.which("xfce4-terminal"):
+        return ["xfce4-terminal", "--title=agent-terminal", "-e", " ".join(shell_args)]
     raise SessionError("no guest terminal found (install alacritty, kitty, or xterm)")
 
 
