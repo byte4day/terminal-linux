@@ -266,45 +266,50 @@ def run_viewer(name: str = "default", *, fps: float = 20.0, show_cursor_overlay:
             state = current
 
             if now - last_frame >= interval:
-                ptr = pointer_position(state)
-                if ptr:
-                    cursor_xy = (ptr.x, ptr.y)
+                try:
+                    ptr = pointer_position(state)
+                    if ptr:
+                        cursor_xy = (ptr.x, ptr.y)
 
-                shot = stream.latest()
-                if shot is None:
-                    shot = actions.screenshot(state)
+                    # Prefer a complete PNG snapshot — ffmpeg rewrites live-frame.png in place.
+                    shot = stream.snapshot()
+                    if shot is None:
+                        shot = actions.screenshot(state)
 
-                digest = file_digest(shot)
-                cols, rows = terminal_size()
-                if digest != last_digest or (show_cursor_overlay and ptr):
-                    display_path = shot
-                    if show_cursor_overlay and ptr:
-                        display_path = draw_agent_cursor(
-                            shot, ptr, src_w=state.width, src_h=state.height
+                    digest = file_digest(shot)
+                    cols, rows = terminal_size()
+                    if digest != last_digest or (show_cursor_overlay and ptr):
+                        display_path = shot
+                        if show_cursor_overlay and ptr:
+                            display_path = draw_agent_cursor(
+                                shot, ptr, src_w=state.width, src_h=state.height
+                            )
+                        if hiqi:
+                            display_png(display_path, cols=cols, rows=max(1, rows - 1))
+                        else:
+                            display_ansi_frame(display_path, cols=cols, rows=rows)
+                        if display_path != shot:
+                            try:
+                                display_path.unlink(missing_ok=True)
+                            except OSError:
+                                pass
+                        last_digest = digest
+                        frames += 1
+
+                    _status_line(
+                        _banner(
+                            name,
+                            state,
+                            fps,
+                            activity.latest_text(name),
+                            mode=mode,
+                            cursor=cursor_xy,
+                            tabs=tabs,
                         )
-                    if hiqi:
-                        display_png(display_path, cols=cols, rows=max(1, rows - 1))
-                    else:
-                        display_ansi_frame(display_path, cols=cols, rows=rows)
-                    if display_path != shot:
-                        try:
-                            display_path.unlink(missing_ok=True)
-                        except OSError:
-                            pass
-                    last_digest = digest
-                    frames += 1
-
-                _status_line(
-                    _banner(
-                        name,
-                        state,
-                        fps,
-                        activity.latest_text(name),
-                        mode=mode,
-                        cursor=cursor_xy,
-                        tabs=tabs,
                     )
-                )
+                except Exception:
+                    # Never let a torn capture frame kill the live preview.
+                    pass
                 last_frame = now
 
             chunk = _read_available(fd, timeout=0.01)

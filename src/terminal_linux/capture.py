@@ -16,6 +16,19 @@ except ImportError:  # pragma: no cover
     Image = None  # type: ignore[assignment]
     ImageDraw = None  # type: ignore[assignment]
 
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+# Pillow raises SyntaxError on torn PNGs (chunk parse), not just OSError.
+_PNG_OPEN_ERRORS = (OSError, SyntaxError, ValueError)
+
+
+def png_complete(data: bytes) -> bool:
+    """True when bytes look like a finished PNG (signature + IEND trailer)."""
+    return (
+        len(data) >= 57
+        and data.startswith(PNG_SIG)
+        and b"\x00\x00\x00\x00IEND" in data[-16:]
+    )
+
 
 @dataclass
 class Pointer:
@@ -51,35 +64,38 @@ def draw_agent_cursor(frame: Path, pointer: Pointer, *, src_w: int, src_h: int) 
     if Image is None or ImageDraw is None:
         return frame
     try:
-        im = Image.open(frame).convert("RGBA")
-    except OSError:
-        return frame
-    fw, fh = im.size
-    x = int(pointer.x / max(src_w, 1) * fw)
-    y = int(pointer.y / max(src_h, 1) * fh)
-    x = max(0, min(fw - 1, x))
-    y = max(0, min(fh - 1, y))
+        with Image.open(frame) as src:
+            src.load()  # force decode now; ffmpeg may still be rewriting the live file
+            im = src.convert("RGBA")
+        fw, fh = im.size
+        x = int(pointer.x / max(src_w, 1) * fw)
+        y = int(pointer.y / max(src_h, 1) * fh)
+        x = max(0, min(fw - 1, x))
+        y = max(0, min(fh - 1, y))
 
-    overlay = Image.new("RGBA", im.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(overlay)
-    # Arrow pointer
-    pts = [
-        (x, y),
-        (x, y + 18),
-        (x + 5, y + 14),
-        (x + 11, y + 24),
-        (x + 15, y + 22),
-        (x + 8, y + 12),
-        (x + 14, y + 12),
-    ]
-    d.polygon(pts, fill=(255, 64, 64, 230), outline=(255, 255, 255, 255))
-    # hotspot ring so it's obvious even on red UIs
-    d.ellipse((x - 3, y - 3, x + 3, y + 3), outline=(255, 255, 0, 255), width=2)
-    out = im.convert("RGBA")
-    out.alpha_composite(overlay)
-    dest = frame.with_name(frame.stem + "-cursor.png")
-    out.convert("RGB").save(dest, format="PNG", optimize=True)
-    return dest
+        overlay = Image.new("RGBA", im.size, (0, 0, 0, 0))
+        d = ImageDraw.Draw(overlay)
+        # Arrow pointer
+        pts = [
+            (x, y),
+            (x, y + 18),
+            (x + 5, y + 14),
+            (x + 11, y + 24),
+            (x + 15, y + 22),
+            (x + 8, y + 12),
+            (x + 14, y + 12),
+        ]
+        d.polygon(pts, fill=(255, 64, 64, 230), outline=(255, 255, 255, 255))
+        # hotspot ring so it's obvious even on red UIs
+        d.ellipse((x - 3, y - 3, x + 3, y + 3), outline=(255, 255, 0, 255), width=2)
+        out = im.convert("RGBA")
+        out.alpha_composite(overlay)
+        dest = frame.with_name(frame.stem + "-cursor.png")
+        out.convert("RGB").save(dest, format="PNG", optimize=True)
+        return dest
+    except _PNG_OPEN_ERRORS:
+        # Torn in-place ffmpeg frame — skip overlay this tick.
+        return frame
 
 
 class CaptureStream:
@@ -181,10 +197,32 @@ class CaptureStream:
             return self.dest
         return None
 
+    def snapshot(self, *, retries: int = 10, delay: float = 0.005) -> Path | None:
+        """
+        Copy a complete live PNG to a sidecar path.
+
+        ffmpeg -update 1 rewrites dest in place, so readers can see a torn file.
+        We only publish bytes that parse as a finished PNG.
+        """
+        stable = self.dest.with_name(self.dest.stem + ".stable.png")
+        for _ in range(max(1, retries)):
+            try:
+                data = self.dest.read_bytes()
+            except OSError:
+                data = b""
+            if png_complete(data):
+                try:
+                    stable.write_bytes(data)
+                    return stable
+                except OSError:
+                    return None
+            time.sleep(delay)
+        return None
+
     def wait_frame(self, timeout: float = 1.0) -> Path | None:
         deadline = time.time() + timeout
         while time.time() < deadline:
-            frame = self.latest()
+            frame = self.snapshot(retries=2, delay=0.01)
             if frame:
                 return frame
             time.sleep(0.02)
