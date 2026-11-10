@@ -1,6 +1,6 @@
 {
   "name": "terminal-linux",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Computer use on a separate Linux desktop (Xvfb): screenshot, click, type and shortcut tools plus a skill for driving the guest. Requires the terminal-linux CLI on PATH.",
   "author": {
     "name": "byte4day",

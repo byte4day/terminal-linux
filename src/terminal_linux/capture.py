@@ -4,6 +4,7 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,41 @@ def png_complete(data: bytes) -> bool:
         and data.startswith(PNG_SIG)
         and b"\x00\x00\x00\x00IEND" in data[-16:]
     )
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write bytes via a same-directory temp file + os.replace (atomic on POSIX)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def extract_png_frames(buf: bytes) -> tuple[list[bytes], bytes]:
+    """Split concatenated PNG bytes into complete frames + remainder."""
+    frames: list[bytes] = []
+    while True:
+        start = buf.find(PNG_SIG)
+        if start < 0:
+            return frames, b""
+        if start > 0:
+            buf = buf[start:]
+        iend = buf.find(b"\x00\x00\x00\x00IEND")
+        if iend < 0:
+            return frames, buf
+        end = iend + 12  # length(0) + IEND + CRC
+        if len(buf) < end:
+            return frames, buf
+        frame = buf[:end]
+        if png_complete(frame):
+            frames.append(frame)
+        buf = buf[end:]
 
 
 @dataclass
@@ -65,7 +101,7 @@ def draw_agent_cursor(frame: Path, pointer: Pointer, *, src_w: int, src_h: int) 
         return frame
     try:
         with Image.open(frame) as src:
-            src.load()  # force decode now; ffmpeg may still be rewriting the live file
+            src.load()  # force decode now
             im = src.convert("RGBA")
         fw, fh = im.size
         x = int(pointer.x / max(src_w, 1) * fw)
@@ -93,8 +129,8 @@ def draw_agent_cursor(frame: Path, pointer: Pointer, *, src_w: int, src_h: int) 
         dest = frame.with_name(frame.stem + "-cursor.png")
         out.convert("RGB").save(dest, format="PNG", optimize=True)
         return dest
-    except _PNG_OPEN_ERRORS:
-        # Torn in-place ffmpeg frame — skip overlay this tick.
+    except Exception:
+        # Torn/partial frame or Pillow quirk — skip overlay this tick.
         return frame
 
 
@@ -102,8 +138,8 @@ class CaptureStream:
     """
     Persistent ffmpeg x11grab writer.
 
-    Spawning ffmpeg/import per frame is what made the viewer feel slow.
-    This keeps one capture process alive and updates a single PNG in place.
+    Frames are emitted on stdout as concatenated PNGs; a reader thread publishes
+    each complete frame with an atomic replace so the viewer never opens a torn file.
     """
 
     def __init__(
@@ -119,6 +155,8 @@ class CaptureStream:
         self.fps = max(5.0, min(fps, 30.0))
         self.max_w = max_w
         self.proc: subprocess.Popen[bytes] | None = None
+        self._reader: threading.Thread | None = None
+        self._stop = threading.Event()
 
     @property
     def alive(self) -> bool:
@@ -130,6 +168,7 @@ class CaptureStream:
         if not shutil.which("ffmpeg"):
             return
         self.dest.parent.mkdir(parents=True, exist_ok=True)
+        self._stop.clear()
         # Seed a first frame quickly with import so the viewer isn't blank.
         try:
             subprocess.run(
@@ -160,21 +199,53 @@ class CaptureStream:
             f"{self.state.display_name}.0",
             "-vf",
             vf,
-            "-update",
-            "1",
-            "-y",
-            str(self.dest),
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "pipe:1",
         ]
         self.proc = subprocess.Popen(
             cmd,
             env=self.state.env(),
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+        self._reader = threading.Thread(
+            target=self._pump_frames,
+            name="terminal-linux-capture",
+            daemon=True,
+        )
+        self._reader.start()
+
+    def _pump_frames(self) -> None:
+        proc = self.proc
+        if proc is None or proc.stdout is None:
+            return
+        buf = b""
+        try:
+            while not self._stop.is_set():
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                frames, buf = extract_png_frames(buf)
+                for frame in frames:
+                    try:
+                        atomic_write_bytes(self.dest, frame)
+                    except OSError:
+                        pass
+                # Cap buffer if ffmpeg ever emits garbage without IEND.
+                if len(buf) > 8_000_000:
+                    buf = buf[-1_000_000:]
+        except Exception:
+            pass
 
     def stop(self) -> None:
+        self._stop.set()
         if not self.proc:
+            self._reader = None
             return
         try:
             os.killpg(self.proc.pid, signal.SIGTERM)
@@ -184,13 +255,21 @@ class CaptureStream:
             except Exception:
                 pass
         try:
+            if self.proc.stdout:
+                self.proc.stdout.close()
+        except Exception:
+            pass
+        try:
             self.proc.wait(timeout=2)
         except Exception:
             try:
                 os.killpg(self.proc.pid, signal.SIGKILL)
             except Exception:
                 pass
+        if self._reader and self._reader.is_alive():
+            self._reader.join(timeout=1.0)
         self.proc = None
+        self._reader = None
 
     def latest(self) -> Path | None:
         if self.dest.exists() and self.dest.stat().st_size > 0:
@@ -201,8 +280,7 @@ class CaptureStream:
         """
         Copy a complete live PNG to a sidecar path.
 
-        ffmpeg -update 1 rewrites dest in place, so readers can see a torn file.
-        We only publish bytes that parse as a finished PNG.
+        Dest is atomically replaced, but we still verify PNG integrity before use.
         """
         stable = self.dest.with_name(self.dest.stem + ".stable.png")
         for _ in range(max(1, retries)):
@@ -212,7 +290,7 @@ class CaptureStream:
                 data = b""
             if png_complete(data):
                 try:
-                    stable.write_bytes(data)
+                    atomic_write_bytes(stable, data)
                     return stable
                 except OSError:
                     return None
