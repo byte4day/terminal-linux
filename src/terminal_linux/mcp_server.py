@@ -1,22 +1,23 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp.utilities.types import Image
-
-from . import actions, agent_tools
-from .session import SessionError, get_running, list_sessions, open_app, start_session, stop_session
+from . import actions, agent_tools, batch as batch_mod
+from .errors import SessionError
+from .session import get_running, list_sessions, open_app, start_session, stop_session
 
 
 def resolve_cli() -> str:
     which = shutil.which("terminal-linux")
     if which:
         return str(Path(which).resolve())
-    local = Path(sys.executable).resolve().parent / "terminal-linux"
+    # Next to the interpreter as invoked (a venv's bin/), not its resolved target.
+    local = Path(sys.executable).parent / "terminal-linux"
     if local.exists():
         return str(local)
     return "terminal-linux"
@@ -31,29 +32,35 @@ def mcp_config_snippet(name: str = "default", *, client: str = "claude") -> dict
     return {"mcpServers": {"terminal-linux": server}}
 
 
-def _maybe_shot(state, want: bool) -> dict[str, Any]:
-    if not want:
-        return {}
-    path = actions.screenshot(state)
-    return {"screenshot": str(path)}
-
-
 def _json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, indent=2)
+
+
+def screenshot_bytes(state, **options: Any) -> bytes:
+    """PNG bytes of the guest screen; the temporary file is removed."""
+    path = actions.screenshot(state, **options)
+    try:
+        return path.read_bytes()
+    finally:
+        path.unlink(missing_ok=True)
 
 
 AGENT_INSTRUCTIONS = """\
 You control a separate Linux desktop (Xvfb + Openbox) for computer-use.
 It has its own terminal window titled "agent-terminal" and usually Firefox.
 
-Loop: status/up → screenshot → act → screenshot/wait_stable → repeat.
-Coordinates are pixels from the latest screenshot (top-left origin).
-Prefer keyboard shortcuts and run_in_terminal over tiny click targets.
+Loop: status/up → screenshot → act → look again → repeat. stop when done.
+Coordinates are pixels of the full screen (top-left origin), also in a
+region or zoomed screenshot: read them off the grid labels (screenshot grid=true).
+Pass screenshot=true on an action, or use batch, to get the new screen back in
+the same call. Use wait_window after open, and wait_stable after page loads.
+Prefer keyboard shortcuts, windows/focus and run_in_terminal over tiny click targets.
 Never use the host desktop — only these tools.
 """
 
 
-def run_mcp(name: str = "default") -> None:
+def build_server(name: str = "default"):
+    """Create the FastMCP server with every tool registered (not yet running)."""
     try:
         from mcp.server.fastmcp import FastMCP, Image
     except ImportError as exc:  # pragma: no cover
@@ -63,6 +70,15 @@ def run_mcp(name: str = "default") -> None:
 
     def session():
         return get_running(name)
+
+    # Tools that can return an image carry no return annotation on purpose:
+    # FastMCP would otherwise build a structured-output schema that an image
+    # cannot satisfy.
+    def reply(payload: dict[str, Any], want_shot: bool = False):
+        """JSON text, plus the new screen as an image when asked for."""
+        if not want_shot:
+            return _json(payload)
+        return [_json(payload), Image(data=screenshot_bytes(session()), format="png")]
 
     @server.tool()
     def status() -> str:
@@ -76,15 +92,20 @@ def run_mcp(name: str = "default") -> None:
         with_browser: bool = True,
         with_terminal: bool = True,
     ) -> str:
-        """Start the guest desktop. Optionally open Firefox and agent-terminal."""
+        """Start the guest desktop (width x height pixels). Optionally open Firefox and agent-terminal.
+
+        If the session already runs it is reused at its current size (see `reused`).
+        """
+        before = actions.status_payload(name)
         apps: list[list[str]] = []
-        if with_terminal:
-            try:
-                apps.append(agent_tools.pick_guest_terminal())
-            except SessionError:
-                pass
-        if with_browser and shutil.which("firefox"):
-            apps.append(["firefox"])
+        if not before["running"]:
+            if with_terminal:
+                try:
+                    apps.append(agent_tools.pick_guest_terminal())
+                except SessionError:
+                    pass
+            if with_browser and shutil.which("firefox"):
+                apps.append(["firefox"])
         state = start_session(name, width=width, height=height, apps=apps)
         return _json(
             {
@@ -93,6 +114,7 @@ def run_mcp(name: str = "default") -> None:
                 "display": state.display_name,
                 "width": state.width,
                 "height": state.height,
+                "reused": bool(before["running"]),
                 "apps": state.apps,
                 "hotkeys": agent_tools.hotkeys_help(),
             }
@@ -100,9 +122,9 @@ def run_mcp(name: str = "default") -> None:
 
     @server.tool()
     def stop(force: bool = False) -> str:
-        """Stop the guest desktop session."""
-        stop_session(name, force=force)
-        return _json({"ok": True, "stopped": name, "force": force})
+        """Stop the guest desktop session. force=true kills it at once and can lose guest work."""
+        was_running = stop_session(name, force=force)
+        return _json({"ok": True, "stopped": name, "force": force, "was_running": was_running})
 
     @server.tool()
     def ls() -> str:
@@ -116,10 +138,13 @@ def run_mcp(name: str = "default") -> None:
 
     @server.tool(name="open")
     def open_tool(command: str) -> str:
-        """Launch a command inside the guest (e.g. 'firefox', 'alacritty')."""
-        parts = command.strip().split()
+        """Launch a command inside the guest (e.g. 'firefox', 'thunar ~/Downloads'). Shell quoting is honoured."""
+        try:
+            parts = shlex.split(command)
+        except ValueError as exc:
+            raise SessionError(f"cannot parse command: {exc}", code="bad_args") from exc
         if not parts:
-            raise SessionError("command is empty")
+            raise SessionError("command is empty", code="bad_args")
         pid = open_app(name, parts)
         return _json({"ok": True, "pid": pid, "command": parts})
 
@@ -130,7 +155,7 @@ def run_mcp(name: str = "default") -> None:
 
     @server.tool()
     def windows() -> str:
-        """List guest windows (id, class, title)."""
+        """List guest windows: id, class, title, x/y/width/height, center point, and which is active."""
         return _json({"ok": True, "windows": agent_tools.list_windows(name)})
 
     @server.tool()
@@ -139,9 +164,13 @@ def run_mcp(name: str = "default") -> None:
         return _json({"ok": True, **agent_tools.active_window(name)})
 
     @server.tool()
-    def focus(title: str | None = None, window_id: str | None = None) -> str:
-        """Focus a guest window by title substring or id."""
-        return _json(agent_tools.focus_window(name, window_id=window_id, title=title))
+    def focus(
+        title: str | None = None,
+        window_id: str | None = None,
+        window_class: str | None = None,
+    ) -> str:
+        """Focus a guest window by title substring, class substring (e.g. 'firefox') or id."""
+        return _json(agent_tools.focus_window(name, window_id=window_id, title=title, cls=window_class))
 
     @server.tool()
     def cursor() -> str:
@@ -155,30 +184,54 @@ def run_mcp(name: str = "default") -> None:
 
     @server.tool()
     def clipboard_set(text: str) -> str:
-        """Write text to the guest clipboard."""
+        """Write text to the guest clipboard (then paste with key ctrl+v)."""
         return _json(agent_tools.clipboard_set(name, text))
 
     @server.tool()
     def wait(seconds: float = 1.0) -> str:
-        """Sleep up to 30s (UI settle / page load)."""
+        """Sleep up to 30s. Prefer wait_window or wait_stable when you know what you wait for."""
         return _json(agent_tools.wait(name, seconds))
 
     @server.tool()
     def wait_stable(timeout: float = 10.0, settle: float = 0.6) -> str:
-        """Wait until the screen stops changing (or timeout)."""
+        """Wait until the screen stops changing for `settle` seconds (or timeout). Check `stable`."""
         return _json(agent_tools.wait_stable(name, timeout=timeout, settle=settle))
 
     @server.tool()
-    def run_in_terminal(command: str) -> str:
-        """Type a shell command into agent-terminal and press Enter."""
-        return _json(agent_tools.run_in_terminal(name, command))
+    def wait_window(
+        title: str | None = None,
+        window_class: str | None = None,
+        timeout: float = 10.0,
+        gone: bool = False,
+    ) -> str:
+        """Wait for a window whose title/class contains the text to appear (gone=true: to close).
+
+        Returns found/gone plus the window's geometry, or timeout=true. Use after `open`.
+        """
+        return _json(
+            agent_tools.wait_window(name, title=title, cls=window_class, timeout=timeout, gone=gone)
+        )
 
     @server.tool()
-    def screenshot() -> Image:
-        """Capture the guest desktop. Coordinates for other tools match this image."""
-        state = session()
-        path = actions.screenshot(state)
-        return Image(path=path, format="png")
+    def run_in_terminal(command: str, screenshot: bool = False):
+        """Type a shell command into agent-terminal and press Enter. Output is on screen, not returned."""
+        return reply(agent_tools.run_in_terminal(name, command), screenshot)
+
+    @server.tool()
+    def screenshot(
+        grid: bool = False,
+        region: list[int] | None = None,
+        zoom: int = 1,
+    ):
+        """Capture the guest desktop as an image.
+
+        grid=true overlays labelled coordinate lines for accurate clicks.
+        region=[x, y, width, height] crops to that area; zoom (1-4) enlarges it
+        to read small text. Grid labels and all tool coordinates stay in
+        full-screen pixels.
+        """
+        data = screenshot_bytes(session(), grid=grid, region=region, zoom=zoom)
+        return Image(data=data, format="png")
 
     @server.tool()
     def click(
@@ -187,31 +240,25 @@ def run_mcp(name: str = "default") -> None:
         button: str = "left",
         clicks: int = 1,
         screenshot: bool = False,
-    ) -> str:
-        """Click at pixel (x, y). button: left|middle|right. clicks: 1|2|3."""
+    ):
+        """Click at pixel (x, y). button: left|middle|right. clicks: 1|2|3. screenshot=true returns the new screen."""
         state = session()
         actions.click(state, x, y, button=button, clicks=clicks)
-        payload = {"ok": True, "x": x, "y": y, "button": button, "clicks": clicks}
-        payload.update(_maybe_shot(state, screenshot))
-        return _json(payload)
+        return reply({"ok": True, "x": x, "y": y, "button": button, "clicks": clicks}, screenshot)
 
     @server.tool()
-    def move(x: int, y: int, screenshot: bool = False) -> str:
-        """Move the guest pointer to (x, y)."""
+    def move(x: int, y: int, screenshot: bool = False):
+        """Move the guest pointer to (x, y), e.g. to hover."""
         state = session()
         actions.move(state, x, y)
-        payload = {"ok": True, "x": x, "y": y}
-        payload.update(_maybe_shot(state, screenshot))
-        return _json(payload)
+        return reply({"ok": True, "x": x, "y": y}, screenshot)
 
     @server.tool()
-    def drag(x1: int, y1: int, x2: int, y2: int, screenshot: bool = False) -> str:
+    def drag(x1: int, y1: int, x2: int, y2: int, screenshot: bool = False):
         """Drag from (x1,y1) to (x2,y2) with the left button."""
         state = session()
         actions.drag(state, x1, y1, x2, y2)
-        payload = {"ok": True, "from": [x1, y1], "to": [x2, y2]}
-        payload.update(_maybe_shot(state, screenshot))
-        return _json(payload)
+        return reply({"ok": True, "from": [x1, y1], "to": [x2, y2]}, screenshot)
 
     @server.tool()
     def scroll(
@@ -220,31 +267,47 @@ def run_mcp(name: str = "default") -> None:
         x: int | None = None,
         y: int | None = None,
         screenshot: bool = False,
-    ) -> str:
-        """Scroll at optional (x,y). Negative dy scrolls down."""
+    ):
+        """Scroll at optional (x,y). Negative dy scrolls down; 120 is about three wheel notches."""
         state = session()
         actions.scroll(state, dy=dy, dx=dx, x=x, y=y)
-        payload = {"ok": True, "dy": dy, "dx": dx, "x": x, "y": y}
-        payload.update(_maybe_shot(state, screenshot))
-        return _json(payload)
+        return reply({"ok": True, "dy": dy, "dx": dx, "x": x, "y": y}, screenshot)
 
     @server.tool(name="type")
-    def type_tool(text: str, screenshot: bool = False) -> str:
-        """Type literal Unicode text into the guest (not via clipboard)."""
+    def type_tool(text: str, screenshot: bool = False):
+        """Type literal Unicode text into the focused guest window (not via clipboard)."""
         state = session()
         actions.type_text(state, text)
-        payload = {"ok": True, "text": text}
-        payload.update(_maybe_shot(state, screenshot))
-        return _json(payload)
+        return reply({"ok": True, "chars": len(text)}, screenshot)
 
     @server.tool()
-    def key(key: str, screenshot: bool = False) -> str:
-        """Press a key/chord: return, tab, ctrl+c, alt+F4, cmd+space (cmd→ctrl)."""
+    def key(key: str, screenshot: bool = False):
+        """Press a key or chord: return, tab, ctrl+c, alt+F4, super, ctrl++, cmd+space (cmd→ctrl).
+
+        Several chords in order, separated by spaces: 'ctrl+a ctrl+c'.
+        """
         state = session()
         actions.press_key(state, key)
-        payload = {"ok": True, "key": key}
-        payload.update(_maybe_shot(state, screenshot))
-        return _json(payload)
+        return reply({"ok": True, "key": key}, screenshot)
+
+    @server.tool()
+    def batch(steps: list[dict[str, Any]], screenshot: bool = True):
+        """Run several steps in one call and get one screenshot of the result.
+
+        Each step is {"action": NAME, ...args} with the same args as the single
+        tools. Actions: click, move, drag, scroll, type, key, wait, wait_stable,
+        wait_window, focus, open, open_url, run_in_terminal, clipboard_set,
+        clipboard_get. Stops at the first failing step (see failed_step).
+        Example: [{"action":"click","x":640,"y":60},{"action":"type","text":"hello"},
+        {"action":"key","key":"return"},{"action":"wait_stable"}]
+        """
+        result = batch_mod.run_batch(name, steps)
+        if not screenshot:
+            return _json(result)
+        try:
+            return [_json(result), Image(data=screenshot_bytes(session()), format="png")]
+        except SessionError:
+            return _json(result)
 
     @server.resource("terminal-linux://hotkeys")
     def hotkeys_resource() -> str:
@@ -254,4 +317,8 @@ def run_mcp(name: str = "default") -> None:
     def computer_use_prompt() -> str:
         return AGENT_INSTRUCTIONS + "\nHotkeys:\n" + _json(agent_tools.hotkeys_help())
 
-    server.run(transport="stdio")
+    return server
+
+
+def run_mcp(name: str = "default") -> None:
+    build_server(name).run(transport="stdio")

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Download a trimmed Openbox binary + Clearlooks theme into vendor/openbox (Arch package).
+# Download a trimmed Openbox binary + Clearlooks theme into src/terminal_linux/vendor/openbox (Arch package).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DEST="$ROOT/vendor/openbox"
+DEST="$ROOT/src/terminal_linux/vendor/openbox"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 

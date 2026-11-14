@@ -26,7 +26,8 @@ from .graphics import (
     terminal_size,
 )
 from .paths import machine_dir
-from .session import SessionError, get_running, running_session_names
+from .errors import SessionError
+from .session import get_running, running_session_names
 from .state import SessionState, is_running, load_state
 
 
@@ -46,6 +47,34 @@ SHORTCUTS = {
     "8": ("ctrl+r", "reload"),
     "9": ("Return", "confirm"),
 }
+
+
+class _GuestInput:
+    """`actions.*` for keys and mouse typed into the live view.
+
+    A key the guest cannot take (an unknown keysym, a point off the screen)
+    is shown in the status line instead of ending the preview.
+    """
+
+    def __getattr__(self, attr: str):
+        fn = getattr(actions, attr)
+
+        def call(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except SessionError as exc:
+                _status_line(f" input not sent: {exc}")
+                return None
+
+        return call
+
+
+guest = _GuestInput()
+
+
+def _alt_chord(ch: int) -> str:
+    """Alt+<printable byte> as a key chord ('alt+space' for a blank)."""
+    return "alt+space" if ch == 32 else f"alt+{chr(ch)}"
 
 
 def _read_available(fd: int, timeout: float = 0.05) -> bytes:
@@ -274,7 +303,8 @@ def run_viewer(name: str = "default", *, fps: float = 20.0, show_cursor_overlay:
                     # Prefer a complete PNG snapshot — ffmpeg rewrites live-frame.png in place.
                     shot = stream.snapshot()
                     if shot is None:
-                        shot = actions.screenshot(state)
+                        # One fixed file: a fresh temp file per frame would fill /tmp.
+                        shot = actions.screenshot(state, machine_dir(name) / "live-fallback.png")
 
                     digest = file_digest(shot)
                     cols, rows = terminal_size()
@@ -331,7 +361,7 @@ def run_viewer(name: str = "default", *, fps: float = 20.0, show_cursor_overlay:
                 if key:
                     ch = key[:1].decode("latin1", errors="ignore")
                     if ch in SHORTCUTS:
-                        actions.press_key(state, SHORTCUTS[ch][0])
+                        guest.press_key(state, SHORTCUTS[ch][0])
                         activity.note(name, f"key {SHORTCUTS[ch][0]}")
                         last_digest = ""
                 continue
@@ -356,43 +386,43 @@ def run_viewer(name: str = "default", *, fps: float = 20.0, show_cursor_overlay:
                 x, y = _cell_to_pixel(col, row, state)
                 btn = button & 0x3F
                 if button & 32:
-                    actions.move(state, x, y)
+                    guest.move(state, x, y)
                     cursor_xy = (x, y)
                     continue
                 if btn == 64 and pressed:
-                    actions.scroll(state, dy=120, x=x, y=y)
+                    guest.scroll(state, dy=120, x=x, y=y)
                     activity.note(name, f"scroll up @ {x},{y}")
                     last_digest = ""
                     continue
                 if btn == 65 and pressed:
-                    actions.scroll(state, dy=-120, x=x, y=y)
+                    guest.scroll(state, dy=-120, x=x, y=y)
                     activity.note(name, f"scroll down @ {x},{y}")
                     last_digest = ""
                     continue
                 if btn == 0:
                     if pressed:
                         drag_origin = (x, y)
-                        actions.move(state, x, y)
+                        guest.move(state, x, y)
                         cursor_xy = (x, y)
                     else:
                         if drag_origin and (
                             abs(drag_origin[0] - x) > 4 or abs(drag_origin[1] - y) > 4
                         ):
-                            actions.drag(state, drag_origin[0], drag_origin[1], x, y)
+                            guest.drag(state, drag_origin[0], drag_origin[1], x, y)
                             activity.note(name, f"drag {drag_origin}→{x},{y}")
                         else:
-                            actions.click(state, x, y, button="left")
+                            guest.click(state, x, y, button="left")
                             activity.note(name, f"click {x},{y}")
                         drag_origin = None
                         cursor_xy = (x, y)
                         last_digest = ""
                 elif btn == 2 and pressed:
-                    actions.click(state, x, y, button="right")
+                    guest.click(state, x, y, button="right")
                     activity.note(name, f"right-click {x},{y}")
                     cursor_xy = (x, y)
                     last_digest = ""
                 elif btn == 1 and pressed:
-                    actions.click(state, x, y, button="middle")
+                    guest.click(state, x, y, button="middle")
                     activity.note(name, f"middle-click {x},{y}")
                     cursor_xy = (x, y)
                     last_digest = ""
@@ -446,7 +476,7 @@ def run_viewer(name: str = "default", *, fps: float = 20.0, show_cursor_overlay:
                             ord("H"): "Home",
                         }
                         if final in mapping:
-                            actions.press_key(state, mapping[final])
+                            guest.press_key(state, mapping[final])
                             activity.note(name, f"key {mapping[final]}")
                             last_digest = ""
                         continue
@@ -473,8 +503,8 @@ def run_viewer(name: str = "default", *, fps: float = 20.0, show_cursor_overlay:
                         continue
                     if 32 <= ch < 127:
                         buf = buf[2:]
-                        actions.press_key(state, f"alt+{chr(ch)}")
-                        activity.note(name, f"key alt+{chr(ch)}")
+                        guest.press_key(state, _alt_chord(ch))
+                        activity.note(name, f"key {_alt_chord(ch)}")
                         last_digest = ""
                         continue
                     buf = buf[1:]
@@ -485,28 +515,28 @@ def run_viewer(name: str = "default", *, fps: float = 20.0, show_cursor_overlay:
                 if ch == 0x1D:
                     return 0
                 if ch == 0x03:
-                    actions.press_key(state, "ctrl+c")
+                    guest.press_key(state, "ctrl+c")
                     activity.note(name, "key ctrl+c")
                     last_digest = ""
                     continue
                 if ch in (0x7F, 0x08):
-                    actions.press_key(state, "BackSpace")
+                    guest.press_key(state, "BackSpace")
                     last_digest = ""
                 elif ch == 0x09:
-                    actions.press_key(state, "Tab")
+                    guest.press_key(state, "Tab")
                     last_digest = ""
                 elif ch in (0x0A, 0x0D):
-                    actions.press_key(state, "Return")
+                    guest.press_key(state, "Return")
                     last_digest = ""
                 elif ch == 0x1B:
-                    actions.press_key(state, "Escape")
+                    guest.press_key(state, "Escape")
                     last_digest = ""
                 elif 32 <= ch < 127:
-                    actions.type_text(state, chr(ch))
+                    guest.type_text(state, chr(ch))
                     last_digest = ""
                 elif 1 <= ch <= 26:
                     letter = chr(ord("a") + ch - 1)
-                    actions.press_key(state, f"ctrl+{letter}")
+                    guest.press_key(state, f"ctrl+{letter}")
                     last_digest = ""
 
         return 0

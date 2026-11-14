@@ -6,15 +6,20 @@ from pathlib import Path
 from typing import Any
 
 from .paths import machine_dir
+from .state import atomic_write_text
 
 
-def activity_path(name: str) -> Path:
-    return machine_dir(name) / "activity.json"
+def activity_path(name: str, *, create: bool = False) -> Path:
+    return machine_dir(name, create=create) / "activity.json"
 
 
 def note(name: str, text: str, **extra: Any) -> None:
+    """Record the latest agent action for the live viewer. Never fails an action."""
     payload = {"t": time.time(), "text": text, **extra}
-    activity_path(name).write_text(json.dumps(payload) + "\n")
+    try:
+        atomic_write_text(activity_path(name, create=True), json.dumps(payload) + "\n")
+    except OSError:
+        pass
 
 
 def read(name: str) -> dict[str, Any] | None:

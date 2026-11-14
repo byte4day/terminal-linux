@@ -11,7 +11,7 @@
     {
       "name": "terminal-linux",
       "source": "./",
-      "description": "Computer use on a separate Linux Xvfb desktop, with MCP tools and an agent skill."
+      "description": "Computer use on a separate Linux Xvfb desktop, with MCP tools, an agent skill and a desktop-operator agent."
     }
   ]
 }

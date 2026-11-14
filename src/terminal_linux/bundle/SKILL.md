@@ -1,0 +1,1 @@
+../../../skills/terminal-linux/SKILL.md

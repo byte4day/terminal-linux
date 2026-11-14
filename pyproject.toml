@@ -1,6 +1,6 @@
 [project]
 name = "terminal-linux"
-version = "0.2.1"
+version = "0.3.0"
 description = "A Linux desktop for AI agents, live in your terminal."
 readme = "README.md"
 requires-python = ">=3.12"
